@@ -1,0 +1,25 @@
+[package]
+name = "flux-orm-derive"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Derive macros for FluxORM"
+documentation = "https://docs.rs/flux-orm-derive"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+darling = { workspace = true }
+
+[dev-dependencies]
+flux-orm = { path = "../flux-orm" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+trybuild = "1.0.114"

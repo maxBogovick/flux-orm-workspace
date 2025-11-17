@@ -1,0 +1,43 @@
+[package]
+name = "flux-orm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A modern, production-ready async ORM for Rust with type-safe queries"
+documentation = "https://docs.rs/flux-orm"
+keywords = ["orm", "database", "sql", "async", "sqlx"]
+categories = ["database"]
+readme = "../README.md"
+
+[dependencies]
+# Core dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+rust_decimal = { workspace = true }
+
+# Derive macros (optional, but recommended)
+flux-orm-derive = { version = "3.0.0", path = "../flux-orm-derive", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+temp-dir = "0.1"
+
+[features]
+default = ["sqlite", "derive"]
+sqlite = []
+postgres = []
+mysql = []
+all-databases = ["sqlite", "postgres", "mysql"]
+derive = ["flux-orm-derive"]
+
+[lib]
+name = "flux_orm"
+path = "src/lib.rs"
