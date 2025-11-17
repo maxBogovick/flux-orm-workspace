@@ -1,0 +1,264 @@
+# docker-compose.yml
+# Complete Docker Compose setup for FluxORM with PostgreSQL, MySQL, and SQLite
+version: '3.8'
+
+services:
+  # ============================================================================
+  # PostgreSQL - Primary Database for Production
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: fluxorm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fluxorm
+      POSTGRES_PASSWORD: fluxorm_secure_pass
+      POSTGRES_DB: fluxorm_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxorm -d fluxorm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - fluxorm_network
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "maintenance_work_mem=64MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "work_mem=2621kB"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+      - "-c"
+      - "log_statement=all"
+      - "-c"
+      - "log_duration=on"
+
+  # ============================================================================
+  # PostgreSQL - Test Database
+  # ============================================================================
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: fluxorm_postgres_test
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fluxorm_test
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: flux_test
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"
+    expose:
+      - "5433"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxorm_test -d flux_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+
+  # ============================================================================
+  # MySQL - Alternative Database
+  # ============================================================================
+  mysql:
+    image: mysql:8.2
+    container_name: fluxorm_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: fluxorm_db
+      MYSQL_USER: fluxorm
+      MYSQL_PASSWORD: fluxorm_secure_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-scripts/mysql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "fluxorm", "-pfluxorm_secure_pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - fluxorm_network
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--max_connections=200"
+      - "--innodb_buffer_pool_size=256M"
+      - "--innodb_log_file_size=64M"
+      - "--innodb_flush_log_at_trx_commit=2"
+      - "--innodb_flush_method=O_DIRECT"
+      - "--query_cache_size=0"
+      - "--query_cache_type=0"
+      - "--log_bin_trust_function_creators=1"
+
+  # ============================================================================
+  # MySQL - Test Database
+  # ============================================================================
+  mysql_test:
+    image: mysql:8.2
+    container_name: fluxorm_mysql_test
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: flux_test
+      MYSQL_USER: fluxorm_test
+      MYSQL_PASSWORD: test_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fluxorm_network
+    tmpfs:
+      - /var/lib/mysql:rw,noexec,nosuid,size=512m
+
+  # ============================================================================
+  # PgAdmin - PostgreSQL Web UI
+  # ============================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: fluxorm_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@fluxorm.local
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin-servers.json:/pgadmin4/servers.json
+    depends_on:
+      - postgres
+    networks:
+      - fluxorm_network
+
+  # ============================================================================
+  # phpMyAdmin - MySQL Web UI
+  # ============================================================================
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: fluxorm_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: fluxorm
+      PMA_PASSWORD: fluxorm_secure_pass
+      UPLOAD_LIMIT: 100M
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+    networks:
+      - fluxorm_network
+
+  # ============================================================================
+  # Redis - Caching Layer (Optional)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: fluxorm_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fluxorm_network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # ============================================================================
+  # Database Migration Runner (Optional)
+  # ============================================================================
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrator
+    container_name: fluxorm_migrator
+    environment:
+      DATABASE_URL: postgresql://fluxorm:fluxorm_secure_pass@postgres:5432/fluxorm_db
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fluxorm_network
+    profiles:
+      - migration
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+volumes:
+  postgres_data:
+    driver: local
+    name: fluxorm_postgres_data
+  postgres_test_data:
+    driver: local
+    name: fluxorm_postgres_test_data
+  mysql_data:
+    driver: local
+    name: fluxorm_mysql_data
+  mysql_test_data:
+    driver: local
+    name: fluxorm_mysql_test_data
+  pgadmin_data:
+    driver: local
+    name: fluxorm_pgadmin_data
+  redis_data:
+    driver: local
+    name: fluxorm_redis_data
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  fluxorm_network:
+    driver: bridge
+    name: fluxorm_network
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
