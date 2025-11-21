@@ -2,12 +2,16 @@
 // Comprehensive integration tests for FluxORM with PostgreSQL
 
 use chrono::{DateTime, Utc};
-use flux_orm::{Flux, Model, Query};
+use flux_orm::backend::common_models::*;
+use flux_orm::backend::errors::*;
+use flux_orm::query::builder::Query;
+use flux_orm::Flux;
 use flux_orm_derive::Model;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
-use flux_orm::backend::errors::*;
-use flux_orm::backend::common_models::*;
+use flux_orm::backend::schema::Schema;
+use flux_orm::driver::dialect::Dialect;
+use flux_orm::driver::dialect::Dialect::PostgreSQL;
 // ============================================================================
 // TEST MODELS
 // ============================================================================
@@ -52,15 +56,19 @@ fn get_test_id() -> u32 {
 }
 
 async fn setup_database() -> Result<Flux> {
-    let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://fluxorm_test:test_pass@localhost:5433/flux_test".to_string());
+    let database_url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://fluxorm_test:test_pass@localhost:5433/flux_test".to_string()
+    });
 
-    let db = Flux::postgres(&database_url)
-        .await?
-        .with_logging(true);
+    let db = Flux::postgres(&database_url).await?.with_logging(true);
 
     // Полная очистка всех данных
-    let _ = db.raw_execute("TRUNCATE TABLE students, groups RESTART IDENTITY CASCADE", &[]).await;
+    let _ = db
+        .raw_execute(
+            "TRUNCATE TABLE students, groups RESTART IDENTITY CASCADE",
+            &[],
+        )
+        .await;
 
     // Убедимся, что таблицы существуют
     db.raw_execute(
@@ -73,7 +81,8 @@ async fn setup_database() -> Result<Flux> {
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )",
         &[],
-    ).await?;
+    )
+    .await?;
 
     db.raw_execute(
         "CREATE TABLE IF NOT EXISTS students (
@@ -89,31 +98,45 @@ async fn setup_database() -> Result<Flux> {
             updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
         )",
         &[],
-    ).await?;
+    )
+    .await?;
 
     // Создаём индексы только если их нет
-    let _ = db.raw_execute(
-        "CREATE INDEX IF NOT EXISTS idx_students_group_id ON students(group_id)",
-        &[],
-    ).await;
+    let _ = db
+        .raw_execute(
+            "CREATE INDEX IF NOT EXISTS idx_students_group_id ON students(group_id)",
+            &[],
+        )
+        .await;
 
-    let _ = db.raw_execute(
-        "CREATE INDEX IF NOT EXISTS idx_students_email ON students(email)",
-        &[],
-    ).await;
+    let _ = db
+        .raw_execute(
+            "CREATE INDEX IF NOT EXISTS idx_students_email ON students(email)",
+            &[],
+        )
+        .await;
 
     Ok(db)
 }
 
 async fn cleanup_database(db: &Flux) -> Result<()> {
     // Полная очистка всех данных после каждого теста
-    db.raw_execute("TRUNCATE TABLE students, groups RESTART IDENTITY CASCADE", &[]).await?;
+    db.raw_execute(
+        "TRUNCATE TABLE students, groups RESTART IDENTITY CASCADE",
+        &[],
+    )
+    .await?;
     Ok(())
 }
 
 // Хелпер для создания уникального email
 fn unique_email(prefix: &str) -> String {
-    format!("{}_{}_{}@example.com", prefix, get_test_id(), chrono::Utc::now().timestamp_millis())
+    format!(
+        "{}_{}_{}@example.com",
+        prefix,
+        get_test_id(),
+        chrono::Utc::now().timestamp_millis()
+    )
 }
 
 // ============================================================================
@@ -134,7 +157,13 @@ async fn test_group_create() -> Result<()> {
     };
 
     let created_group = db.insert(group).await?;
-
+    println!(
+        "{}",
+        group_fields::NAME
+            .like(Value::String("123".to_string()))
+            .apply_to(Query::<Group>::new())
+            .to_sql()
+    );
     assert!(created_group.id.is_some());
     assert!(created_group.name.starts_with("Computer Science 101"));
     assert_eq!(created_group.capacity, 30);
@@ -468,9 +497,7 @@ async fn test_query_order_by() -> Result<()> {
         db.insert(student).await?;
     }
 
-    let students = db
-        .query(Query::<Student>::new().order_by("age"))
-        .await?;
+    let students = db.query(Query::<Student>::new().order_by("age")).await?;
     assert_eq!(students[0].age, 19);
     assert_eq!(students[4].age, 23);
 
@@ -505,14 +532,10 @@ async fn test_query_limit_offset() -> Result<()> {
         db.insert(student).await?;
     }
 
-    let students = db
-        .query(Query::<Student>::new().limit(5))
-        .await?;
+    let students = db.query(Query::<Student>::new().limit(5)).await?;
     assert_eq!(students.len(), 5);
 
-    let students = db
-        .query(Query::<Student>::new().limit(3).offset(5))
-        .await?;
+    let students = db.query(Query::<Student>::new().limit(3).offset(5)).await?;
     assert_eq!(students.len(), 3);
 
     cleanup_database(&db).await?;
@@ -587,11 +610,12 @@ async fn test_query_where_null() -> Result<()> {
     assert_eq!(students.len(), 3);
 
     let students = db
-        .query(Query::<Student>::new()
-            .where_not_null("group_id")
-            .where_field_eq(student_fields::GROUP_ID, group_id)
-            .where_field_between(student_fields::AGE, 10, 30)
-            .order_by_field(student_fields::NAME)
+        .query(
+            Query::<Student>::new()
+                .where_not_null("group_id")
+                .where_field_eq(student_fields::GROUP_ID, group_id)
+                .where_field_between(student_fields::AGE, 10, 30)
+                .order_by_field(student_fields::NAME),
         )
         .await?;
     assert_eq!(students.len(), 2);
@@ -993,9 +1017,7 @@ async fn test_raw_query() -> Result<()> {
     }
 
     let sql = "SELECT * FROM students WHERE age >= $1 ORDER BY age DESC";
-    let students: Vec<Student> = db
-        .raw_query(sql, &[Value::I32(20)])
-        .await?;
+    let students: Vec<Student> = db.raw_query(sql, &[Value::I32(20)]).await?;
 
     assert_eq!(students.len(), 4);
     assert_eq!(students[0].age, 23);
@@ -1027,11 +1049,7 @@ async fn test_raw_execute() -> Result<()> {
     let affected = db
         .raw_execute(
             sql,
-            &[
-                Value::I32(25),
-                Value::F64(3.9),
-                Value::I64(student_id),
-            ],
+            &[Value::I32(25), Value::F64(3.9), Value::I64(student_id)],
         )
         .await?;
 
@@ -1375,11 +1393,19 @@ async fn test_multiple_queries_performance() -> Result<()> {
         db.insert(student).await?;
     }
 
-    let _q1 = db.query(Query::<Student>::new().where_gt("age", 20)).await?;
-    let _q2 = db.query(Query::<Student>::new().where_lte("age", 22)).await?;
-    let _q3 = db.query(Query::<Student>::new().order_by("gpa").limit(10)).await?;
+    let _q1 = db
+        .query(Query::<Student>::new().where_gt("age", 20))
+        .await?;
+    let _q2 = db
+        .query(Query::<Student>::new().where_lte("age", 22))
+        .await?;
+    let _q3 = db
+        .query(Query::<Student>::new().order_by("gpa").limit(10))
+        .await?;
     let _q4 = db.count(Query::<Student>::new()).await?;
-    let _q5 = db.exists(Query::<Student>::new().where_eq("age", 25)).await?;
+    let _q5 = db
+        .exists(Query::<Student>::new().where_eq("age", 25))
+        .await?;
 
     cleanup_database(&db).await?;
     Ok(())
@@ -1398,4 +1424,71 @@ async fn test_database_ping() -> Result<()> {
 
     cleanup_database(&db).await?;
     Ok(())
+}
+
+#[derive(Clone, Debug, Model)]
+#[flux(table = "users", timestamps, soft_delete)]
+pub struct User {
+    #[flux(primary_key, auto_increment)]
+    id: Option<i32>,
+    name: String,
+    #[flux(column = "email_addr", unique, sql_type = "VARCHAR(150)")]
+    email: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    deleted_at: Option<DateTime<Utc>>,
+}
+
+#[tokio::test]
+async fn example_1() -> Result<()> {
+    let db = setup_database().await?;
+    db.raw_execute(User::drop_table_sql().as_str(), &[]).await?;
+    let user_ddl = User::create_table_sql(PostgreSQL);
+    db.raw_execute(user_ddl.as_str(), &[]).await?;
+    clear_user_table(&db).await?;
+    let mut user = User {
+        id: None,
+        name: "John Doe".to_string(),
+        email: "john@example.com".to_string(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        deleted_at: None,
+    };
+
+    let inserted_user = db.insert(user).await?;
+    clear_user_table(&db).await?;
+    Ok(())
+}
+
+async fn clear_user_table(db: &Flux) -> Result<()> {
+    db.raw_execute(
+        "TRUNCATE TABLE users RESTART IDENTITY CASCADE",
+        &[],
+    )
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn migration_examples() {
+    println!("1. Добавление новой колонки:");
+    let new_column = flux_orm::backend::schema::ColumnDefinition {
+        name: "verified_at".to_string(),
+        sql_type: "TIMESTAMP".to_string(),
+        nullable: true,
+        primary_key: false,
+        unique: false,
+        indexed: false,
+        auto_increment: false,
+        max_length: None,
+        default: None,
+    };
+
+    println!("{}\n", User::add_column_sql(&new_column, Dialect::PostgreSQL));
+
+    println!("2. Удаление колонки:");
+    println!("{}\n", User::drop_column_sql("avatar_url"));
+
+    println!("3. Создание индекса:");
+    println!("{}\n", User::create_index_sql("avatar_url", Some("idx_avatar_url")));
 }
